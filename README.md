@@ -4,6 +4,6 @@ Neuro-Degenerative Disease Classification
 
 ## The model part has not yet been fully debugged.
 
-## Update every other week and complete the debugging of 1-2 results.
+## Update every other week and complete the adjusting of 1-2 results.
 
 ## ...
