@@ -5,4 +5,4 @@ Neuro-Degenerative Disease Classification
 
 ## Update every HALF week and complete the adjusting of 1-2 results.
 
-## Continue to adjust the model and reproduce two new methods
+## Continue to adjust results of the all current models and reproduce two new methods
