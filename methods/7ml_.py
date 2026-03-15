@@ -47,6 +47,11 @@ from sklearn.linear_model import LogisticRegression
 from mlxtend.frequent_patterns import apriori
 from mlxtend.frequent_patterns import association_rules
 
+'''
+Add feature selection library
+'''
+from sklearn.feature_selection import SelectKBest, f_classif
+
 # For PageRank (network analysis)
 import networkx as nx
 
@@ -65,6 +70,21 @@ np.random.seed(42)
 CLASS_NAMES = ['ALS', 'Control', 'Huntington', 'Parkinson']
 NUM_CLASSES = 4
 
+# ==================== 0. Unify minimum ts feature period length ====================
+def unify_min_num_cycles(ts_features):
+
+    # num_cycle_length array
+    num_cyc_length = np.zeros((len(ts_features)))
+    # select shortest
+    for i, ts_feature in enumerate(ts_features):
+        num_cyc_length[i] = ts_features[i].shape[0]
+    min_num_cycle = int(num_cyc_length.min())
+    # unify min_num_cycles
+    ts_features_unify = [ts_feature[:min_num_cycle,:] for ts_feature in ts_features]
+
+    return ts_features_unify, min_num_cycle
+
+
 
 # ==================== 1. Information Entropy Calculation ====================
 def calculate_entropy_importance(left_right_data, top_k_entropy_th):
@@ -78,6 +98,14 @@ def calculate_entropy_importance(left_right_data, top_k_entropy_th):
 
     Returns:
         np.ndarray: Selected features [C, top_k_entropy_th]
+
+
+    If the information entropy has high
+    efficiency and performance, it can be
+    given priority for use to select
+    min_num_cycles(Top-k) of ts sequences with the
+    highest information content.
+
     """
     try:
         # Convert to numpy array if needed
@@ -229,12 +257,23 @@ def load_dogen_data(dogen_path, train_ratio=0.5, top_k_entropy_th=200):
         right_data = current_dogen_dict['right_data'].astype(np.float32).reshape(1, -1)
         left_right_data = np.concatenate((left_data, right_data), axis=0)
 
+        '''
+        Shorten the original signal and unify
+        the length of the time ts signal
+        for concatenation:
+        ① Here, calculate_entropy_importance is
+        applied to the original signal.
+        ② For the ts time sequence signal,
+        unify_min_num_cycles is used to calculate
+         the minimum ts length L
+         (Default return value is 122).
+        '''
         # Apply information entropy feature selection
         left_right_data_ied = calculate_entropy_importance(left_right_data, top_k_entropy_th)
 
         # Load time-series features
-        ts_data = current_dogen_dict['ts_array'][:, 1:]  # [num_cycles, 12]
-        elapsed_time = current_dogen_dict['ts_array'][0]  # Elapsed Time (sec)
+        ts_data = current_dogen_dict['ts13_array'][:, 1:]  # [num_cycles, 12]
+        elapsed_time = current_dogen_dict['ts13_array'][:, 0]  # Elapsed Time (sec)
         sample_rate = current_dogen_dict['sample_rate']
 
         ts_data = ndstrarr2ndarray(ts_data).astype(np.float32)
@@ -248,6 +287,15 @@ def load_dogen_data(dogen_path, train_ratio=0.5, top_k_entropy_th=200):
         lr_data_features.append(left_right_data_ied)
         ts_features.append(ts_data)
         basenames_l.append(base_name.lower())
+
+    # Add a method to determine the minimum
+     ## number of cycles (min_num_cycles) in
+       ### the ts_features and print the result.
+       #### Additionally, return and print the
+         ##### shortest ts_features.
+    print("\n Unify ts feature length...")
+    ts_features, uni_num_cycles = unify_min_num_cycles(ts_features)
+    # print ("The unified feature length is:", uni_num_cycles)
 
     # Convert to numpy arrays
     lr_data_features = np.array(lr_data_features)  # [N, 2, K]
@@ -286,10 +334,12 @@ def load_dogen_data(dogen_path, train_ratio=0.5, top_k_entropy_th=200):
     # Flatten 3D features to 2D for traditional ML
     # lr_data_features: [N, 2, K] -> [N, 2*K]
     # ts_features: [N, num_cycles, 12] -> [N, num_cycles*12]
+    # The flattening feature is used in ML calculations.
     lr_flat = lr_data_features.reshape(lr_data_features.shape[0], -1)
     ts_flat = ts_features.reshape(ts_features.shape[0], -1)
 
     # Concatenate all features
+    # Merging Feature Layers
     all_features = np.concatenate([lr_flat, ts_flat], axis=1)  # [N, 2*K + num_cycles*12]
 
     print(f"Flattened feature shape: {all_features.shape}")
@@ -393,6 +443,12 @@ class TraditionalMLModels:
             # Apriori Algorithm for Association Rule Mining
             # Note: Apriori is for association rules, not classification
             # We'll adapt it by converting features to binary and using rule-based classification
+            '''
+            Considering the need to save
+            computing resources, feature
+            selection was adopted to reduce
+            the feature dimension.
+            '''
             self.model = 'Apriori'  # Special handling needed
 
 
@@ -428,7 +484,7 @@ class TraditionalMLModels:
             self.model = AdaBoostClassifier(
                 n_estimators=50,
                 learning_rate=1.0,
-                algorithm='SAMME.R',
+                # algorithm='SAMME.R',
                 random_state=self.random_state
             )
 
@@ -545,7 +601,7 @@ class TraditionalMLModels:
 
         # Special handling for Apriori
         elif self.method_name == 'Apriori':
-            self._fit_apriori(X_train, y_train)
+            self._fit_apriori(X_train, y_train, max_features = 10)
 
         # Special handling for PageRank
         elif self.method_name == 'PageRank':
@@ -656,13 +712,25 @@ class TraditionalMLModels:
         return mapping
 
 
-    def _fit_apriori(self, X_train, y_train):
+    def _fit_apriori(self, X_train, y_train, max_features=10):
         """
         Fit Apriori algorithm for association rule mining.
         Convert features to binary and extract rules.
         """
+
+        """
+        Use feature selection to reduce the number
+        of features
+        """
+        # Initialize Selector
+        selector = SelectKBest(f_classif, k=max_features)
+        X_selected = selector.fit_transform(X_train, y_train)
+
+        print(f"Original features count: {X_train.shape[1]}")
+        print(f"The number of selected features after SelectKBest selection process: {X_selected.shape[1]}")
+
         # Discretize continuous features to binary
-        X_binary = (X_train > np.median(X_train, axis=0)).astype(int)
+        X_binary = (X_selected > np.median(X_selected, axis=0)).astype(int)
 
         # Create DataFrame for mlxtend
         import pandas as pd
@@ -673,7 +741,8 @@ class TraditionalMLModels:
         frequent_itemsets = apriori(
             df.drop('label', axis=1),
             min_support=0.1,
-            use_colnames=True
+            use_colnames=True,
+            low_memory=True  # Add the low memory option
         )
 
         # Generate association rules
@@ -683,9 +752,11 @@ class TraditionalMLModels:
             min_threshold=0.5
         )
 
-        # Store rules for prediction
+        # Store rules and selector for prediction
         self.apriori_rules = rules
         self.apriori_threshold = np.median(X_train, axis=0)
+        self.feature_selector = selector  # Save the selector for prediction
+        self.selected_feature_indices = selector.get_support(indices=True)
 
 
 
@@ -810,7 +881,7 @@ class TraditionalMLModels:
             info += "Parameters:\n"
             info += f"  - n_estimators: {self.model.n_estimators}\n"
             info += f"  - learning_rate: {self.model.learning_rate}\n"
-            info += f"  - algorithm: {self.model.algorithm}\n"
+            # info += f"  - algorithm: {self.model.algorithm}\n"
 
         elif self.method_name == 'kNN':
             info += "Description: k-Nearest Neighbors\n"
@@ -993,15 +1064,16 @@ def plot_training_results(model_name, train_results, test_results, cv_results=No
     axes[0, 1].set_title(f'{model_name} - Testing Accuracy', fontsize=12, fontweight='bold')
     axes[0, 1].grid(True, alpha=0.3, axis='y')
 
+
     # 3. Cross-Validation Results (if available)
-    if cv_results is not None and cv_results['cv_results'] is not None:
-        cv_scores = cv_results['cv_results']['cv_scores']
+    if cv_results is not None and cv_results['cv_scores'] is not None:
+        cv_scores = cv_results['cv_scores']
         fold_nums = np.arange(1, len(cv_scores) + 1)
         axes[1, 0].bar(fold_nums, cv_scores * 100,
                       color='lightgreen', alpha=0.7, edgecolor='black')
-        axes[1, 0].axhline(y=cv_results['cv_results']['mean_cv_acc'] * 100,
+        axes[1, 0].axhline(y=cv_results['mean_cv_acc'] * 100,
                           color='red', linestyle='--', linewidth=2,
-                          label=f'Mean: {cv_results["cv_results"]["mean_cv_acc"]*100:.2f}%')
+                          label=f'Mean: {cv_results["mean_cv_acc"]*100:.2f}%')
         axes[1, 0].set_ylim([0, 100])
         axes[1, 0].set_xlabel('Fold')
         axes[1, 0].set_ylabel('Accuracy (%)')
@@ -1014,6 +1086,8 @@ def plot_training_results(model_name, train_results, test_results, cv_results=No
                         transform=axes[1, 0].transAxes)
         axes[1, 0].set_title('Cross-Validation Results', fontsize=12, fontweight='bold')
 
+
+
     # 4. Confusion Matrix Heatmap
     cm = test_results['confusion_matrix']
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[1, 1],
@@ -1025,13 +1099,16 @@ def plot_training_results(model_name, train_results, test_results, cv_results=No
 
     plt.tight_layout()
 
+
     # Save figure
-    save_dir = 'D:\\gait-in-neurodegenerative-disease-database-1.0.0\\gait-in-neurodegenerative-disease-database-1.0.0\\log_boards_model_pred_results'
+    save_dir = r'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results'
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f'{model_name.lower()}_results.png')
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
-
+    # plt.show()
+    plt.cla()
+    plt.close()
+    #
     print(f"Visualization saved to: {save_path}")
 
 
@@ -1165,10 +1242,15 @@ def main():
 
 
     # ==================== Step 5: Save Results ====================
+    '''
+    ... It is necessary to increase the saving
+     of the ML model... Currently, only the
+    results are saved...
+    '''
     print("\n[Step 5/5] Saving Results...")
     print("-" * 80)
 
-    save_dir = r'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results'
+    save_dir = r'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\neodogen_models'
     os.makedirs(save_dir, exist_ok=True)
 
     save_path = os.path.join(save_dir, 'traditional_ml_results.pkl')
@@ -1222,4 +1304,3 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("Program completed successfully!")
     print("=" * 80)
-
