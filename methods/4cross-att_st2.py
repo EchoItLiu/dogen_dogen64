@@ -1,15 +1,15 @@
 
 """
 ****  Two types of cross-attention methods ****
-## I. One approach is to use the original signal as the 
+## I. One approach is to use the original signal as the
 query (Q) [L], and the time-series signal as the key/value [Source_length]
-, aiming to obtain highly discriminative and strongly correlated 
-information~~ 
+, aiming to obtain highly discriminative and strongly correlated
+information~~
 
-# II. The key idea of our approach on degen-based operations is naive, that 
-is to say, enable the model to learn "at what time points, which gait features 
+# II. The key idea of our approach on degen-based operations is naive, that
+is to say, enable the model to learn "at what time points, which gait features
 should be focused on":
-  #### For example: At the moment of foot react (GRF_signal), focus on 
+  #### For example: At the moment of foot react (GRF_signal), focus on
   "stance" and "double support" phases (stance/support). ####
 
  interpolate VS info_entropy
@@ -34,6 +34,7 @@ from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -42,6 +43,9 @@ torch.manual_seed(42)
 np.random.seed(42)
 random.seed(42)
 
+    """
+    'previous' or 'linear'
+    """
 
 def interpolate_ts_features(ts_samples, elaspsed_time, signal_length, sample_rate=300):
     """
@@ -49,20 +53,30 @@ def interpolate_ts_features(ts_samples, elaspsed_time, signal_length, sample_rat
     """
 
     singal_time = np.arange(signal_length) / sample_rate
-
     ts_interpolate = np.zeros((signal_length,12))
 
+    # print ('elas_type:',  elaspsed_time.dtype)
+    # print ('ts_sample_type:', ts_samples[:,0].dtype)
+    # print ('ts_samples_before:', ts_samples)
+    # print ('ts_samples_before_shape:', ts_samples.shape)
     for col in range(ts_interpolate.shape[1]):
         interp_func = interpolate.interp1d(
         elaspsed_time,
         ts_samples[:,col],
-        kind = 'previous'
-        bounds_error = False
-        fill_value = 'extraplate'
+        # kind = 'previous',
+        kind = 'linear',
+        bounds_error = False,
+        fill_value = 'extrapolate'
         )
-    #
-    ts_interpolate = interp_func(singal_time)
+        ts_interpolate[:,col] = interp_func(singal_time)
 
+    #
+    # print (":", ts_interpolate[:,-1])
+
+    # print ('ts_interpolate_shape:', ts_interpolate.shape)
+    # ts_interploate_mask_nan = np.isnan(ts_interpolate)
+    # stats_nan = np.sum(ts_interploate_mask_nan)
+    # print ("stats_nan:", stats_nan)
     return ts_interpolate
 
 
@@ -105,23 +119,30 @@ def ndstrarr2ndarray(str_nd_arr):
 class plan_model(nn.Module):
     """
     #
-    1、strategy1
+    1、strategy1(long-short |  info_entropy to be continued)
 
     2、 strategy2
     #
 
     """
 
+
+
     def __init__(self,
                  use_cross_attention_strategy_serial='A40',
                  dim_single=2,
                  dim_ts=12,
 
-                 mutHeaAtt_embeded_dim=256
-                 mutHeadAtt_head_num=8
-                 d_model=128
+                 mutHeaAtt_embeded_dim=32,
+                 mutHeadAtt_head_num=8,
+                 # window_size = 128,
+                 # down_target_seq_len = 6000,
+                 # down_target_seq_len = 3000,
+                 down_target_seq_len = 300,
 
-                 dropout=0.3
+                 d_model=128,
+
+                 dropout=0.3,
                  num_classes=4,
                  ):
 
@@ -129,33 +150,36 @@ class plan_model(nn.Module):
         '''
         '''
         self.use_crossAtt_strategy_se = use_cross_attention_strategy_serial
+        # self.windos_size = window_size
+        self.down_target_seq_len = down_target_seq_len
 
-        # A40 strategy: The original signal serves as the query, 
+        # A40 strategy: The original signal serves as the query,
          ##  while the ts time-series signal acts as the key and value.
         if self.use_crossAtt_strategy_se=='A40':
 
-            self.attention = nn.MultiHeadAttention(
+            # query
+            self.proj_singnal = nn.Linear(dim_single,mutHeaAtt_embeded_dim)
+            # key | value，share weights
+            self.proj_ts = nn.Linear(dim_ts,mutHeaAtt_embeded_dim)
+
+            self.attention = nn.MultiheadAttention(
             embed_dim = mutHeaAtt_embeded_dim,
             num_heads = mutHeadAtt_head_num,
             batch_first = True
             )
-            # query
-            self.proj_singnal = nn.Linear(dim_single, mutHeaAtt_embeded_dim)
-            # key | value，
-              ## The default setting here is to use the shared mapping weights.
-            self.proj_ts = nn.Linear(dim_ts, mutHeaAtt_embeded_dim)
+
 
             # transition layer
             self._transition_layer_A40 = nn.Conv1d(
-            in_channels = mutHeaAtt_embeded_dim,
-            out_channels = 64,
-            kernel_size = 7
+            in_channels=mutHeaAtt_embeded_dim,
+            out_channels=64,
+            kernel_size=7
             )
 
-        # strategy2
-        elif: self.use_crossAtt_strategy_se=='B100':
 
-            # The TS feature (length L) is projected onto 
+        elif self.use_crossAtt_strategy_se=='B100':
+
+            # The TS feature (length L) is projected onto
              ## the **Query.
             self.ts_query = nn.Linear(dim_ts, d_model)
 
@@ -165,14 +189,14 @@ class plan_model(nn.Module):
             # The signal (source length S) is mapped to **Key，
             self.singal_key = nn.Linear(dim_ts, d_model)
 
-            # The signal (source length S) is mapped to Value,
-            self.singal_value = nn.Linear(dim_ts, d_model)
+            # The signal (source length S) is mapped to **Value,
+            self.singal_value = nn.Linear(dim_ts,d_model)
 
             # transition layer
             self._transition_layer_B100 = nn.Conv1d(
-            in_channels = d_model + dim_single,
-            out_channels = 64,
-            kernel_size = 7
+            in_channels=d_model + dim_single,
+            out_channels=64,
+            kernel_size=7
             )
 
         # [N,C,L] → [N,C,L]
@@ -205,59 +229,128 @@ class plan_model(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
 
+    # def create_sparse_attention_mask(self, seq_len, window_size, device):
+    #     """
+    #     Create sparse attention mask
+    #
+    #     Args:
+    #         seq_len: Sequence length
+    #         window_size: Attention window size
+    #         device: Tensor device
+    #
+    #     Returns:
+    #         mask: [seq_len, seq_len]，True Indicates that it needs to be masked (not involved in attention calculation)
+    #     """
+    #     mask = torch.ones((seq_len, seq_len), dtype=torch.bool, device=device)
+    #
+    #     for i in range(seq_len):
+    #         start = max(0, i - window_size // 2)
+    #         end = min(seq_len, i + window_size // 2 + 1)
+    #         mask[i, start:end] = False
+    #
+    #     return mask
+
+
+    '''
+
+    ... Here, an high efficient chunking method is
+    introduced (which can save memory by writing
+    to disk and calculate the score)...
+    to be continued...
+    def chunk_strategy():
+        return 0
+        pass
+    '''
+
     def forward(self, original_signal, ts_features):
 
         batch_size = original_signal.size(0)
+        # print ('original_signal_shape:', original_signal.shape)
         # (N,C,L) → (N,L,C)
-        original_signal_input = torch.transpose(original_signal,(0,2,1))
+        original_signal_input = torch.permute(original_signal,(0,2,1))
+
+        # print ('original_signal_input:', original_signal_input)
+        # print ('original_signal_input_shape:', original_signal_input.shape)
 
         if self.use_crossAtt_strategy_se=='A40':
             # [N,L,C]
+            print ('--A40--')
             query = self.proj_singnal(original_signal_input)
-            # [N,S,C] 
+            # print ('query_A40:', query)
+            # [N,S,C]
             key = value = self.proj_ts(ts_features)
             '''
             '''
-            # N * L * C
-            attn_out, _ = self.attention(query, key, value)
+
+            # print ('query_dtype:', query.dtype)
+            # print ('key_dtype:', key.dtype)
+            # print ('value_dtype:', value.dtype)
+
+            # print ('query_shape:', query.shape)
+            # print ('key_shape:', key.shape)
+            # print ('value_shape:', value.shape)
+
+            query_down = F.interpolate(query.permute(0, 2, 1), size = self.down_target_seq_len, mode='linear').permute(0, 2, 1)
+            key_down = F.interpolate(key.permute(0, 2, 1), size = self.down_target_seq_len, mode='linear').permute(0, 2, 1)
+            value_down = F.interpolate(value.permute(0, 2, 1), size = self.down_target_seq_len, mode='linear').permute(0, 2, 1)
+
+
+            # print ('querydown_shape:', query_down.shape)
+            # print ('keydown_shape:', key_down.shape)
+            # print ('valuedown_shape:', value_down.shape)
+
+            # Use mask_attn to generate sparse attention masks
+            # attn_mask  = self.create_sparse_attention_mask(query.shape[1], self.windos_size, query.device)
+            # attn_out, _ = self.attention(query, key, value)
+            # attn_out, _ = self.attention(query, key, value, attn_mask = attn_mask)
+            attn_out, _ = self.attention(query_down, key_down, value_down)
+
+            # Upsample to original length
+            attn_out = F.interpolate(attn_out.permute(0, 2, 1), size=query.shape[1], mode='linear').permute(0, 2, 1)
 
             # Conv1d
-            out = self._transition_layer_A40(np.tranpose(attn_out, (0,2,1)))
+            out = self._transition_layer_A40(torch.permute(attn_out, (0,2,1)))
             # bn
-            logit = self.bn(out)
+            out = self.bn(out)
+            # cls
+            logit_A = self.classifier(out)
+
+            return logit_A
+
 
         elif self.use_crossAtt_strategy_se=='B100':
             """
             signal: (B, 2, T) [Left foot, Right foot]
             ts_interploted: (B, T, 12) interpolated and expanded TS features
             """
-            # Calculate the query&key 
+            print ('--B100--')
+            # Calculate the query&key
             query = self.ts_query(ts_features) # [B,L,C]
-            key = self.singal_key(torch.transpose(original_signal,(0,2,1))) # [B,C,L] → [B,L,C]
+            key = self.singal_key(torch.permute(original_signal,(0,2,1))) # [B,C,L] → [B,L,C]
 
-            # 
-            attn_scores = torch.matmul(query, key.tranpose(-2,-1)) # [B,L,L]
+            # Weighted signal
+            attn_scores = torch.matmul(query, key.transpose(-2,-1)) # [B,L,L]
             attn_weights = F.softmax(attn_scores, dim=-1)
 
             # Weighted signal
-            value = self.singal_value(torch.transpose(original_signal,(0,2,1))) # [B,C,L] → [B,L,C]
+            value = self.singal_value(torch.permute(original_signal,(0,2,1))) # [B,C,L] → [B,L,C]
             # (K*Q) @ V
             attended_singal = torch.matmul(attn_weights, value)  # (B, T, 128)
 
-            # concat
+            # fusion
             signal_enhanced = torch.cat([
             original_signal,
-            torch.transpose(attended_singal, (0,2,1))]
+            torch.permute(attended_singal, (0,2,1))],
             dim = 1
             )
 
-            # 
+            # 中间层
             features = self._transition_layer_B100(signal_enhanced)
             out = self.bn(features)
+            # 最终分类
+            logit_B = self.classifier(out)
 
-        # 
-        logit = self.classifier(out)
-        return logit
+            return logit_B
 
 
 
@@ -319,8 +412,8 @@ def load_dogen_data(dogen_path, train_ratio=0.5):
         left_right_data_length = left_right_data.shape[1]
 
 
-        ts_data = current_dogen_dict['ts_array'][:, 1:]  # [num_cycles, 12]
-        elapsed_time = current_dogen_dict['ts_array'][0] # Elapsed Time (sec)
+        ts_data = current_dogen_dict['ts13_array'][:, 1:]  # [num_cycles, 12]
+        elapsed_time = current_dogen_dict['ts13_array'][:,0] # Elapsed Time (sec)
         sample_rate = current_dogen_dict['sample_rate']
 
         ts_data = ndstrarr2ndarray(ts_data).astype(np.float32)
@@ -361,7 +454,7 @@ def load_dogen_data(dogen_path, train_ratio=0.5):
             curr_label = 3
         # else:
             # pass
-            continue
+            # continue
 
         labels_l.append(curr_label)
 
@@ -407,7 +500,7 @@ def train_model(model, train_loader, val_loader, epochs=50, lr=1e-3,
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-                                                    factor=0.5, patience=5, verbose=True)
+                                                    factor=0.5, patience=5)
 
     train_losses = []
     val_losses = []
@@ -767,10 +860,12 @@ def plot_training_results(train_losses, val_losses, train_accs, val_accs,
         axes[1, 1].set_title('Test results', fontsize=12, fontweight='bold')
 
     plt.tight_layout()
-    plt.savefig('D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results\cross_att_dogen_results.png', dpi=300, bbox_inches='tight')
-    plt.show()
-
-    print("The visualization results have been saved to: cross_att_dogen_results.png")
+    plt.savefig('D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results\cross_att_st2_dogen_results.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.cla()
+    plt.close()
+    #
+    print("The visualization results have been saved to: cross_att_st2_dogen_results.png")
 
 
 
@@ -846,13 +941,24 @@ def main():
     # ==================== 3. Initialize the model ====================
     print("\n [Step 3/8] Initialize the model...")
     print("-" * 80)
-    
+
     model_kwargs = {
-        'use_cross_attention_strategy_serial': 'A',
+        'use_cross_attention_strategy_serial': 'A40',
+        # 'use_cross_attention_strategy_serial': 'A100',
         'dim_single': 2,
+        # 'dim_single': 2,
         'dim_ts': 12,
         'mutHeaAtt_embeded_dim': 256,
+        # 'mutHeaAtt_embeded_dim': 128,
+        # 'mutHeaAtt_embeded_dim': 64,
+        # 'mutHeaAtt_embeded_dim': 8,
+
         'mutHeadAtt_head_num': 8,
+        # 'window_size': 128,
+        # 'down_target_seq_len': 6000,
+        # 'down_target_seq_len': 3000,
+        'down_target_seq_len': 300,
+
         'd_model': 128,
         'dropout': 0.3,
         'num_classes': 4,
@@ -861,7 +967,7 @@ def main():
     # select on/off strategy for 'A40' or 'B100'
     model = plan_model(**model_kwargs).to(device)
 
-    
+
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total number of model parameters: {total_params:,}")
@@ -912,7 +1018,6 @@ def main():
     print("[Step 7/8] Visualized results...")
     print("-" * 80)
 
-    import seaborn as sns
     plot_training_results(train_losses, val_losses, train_accs, val_accs,
                           cv_results, test_results)
 
@@ -922,9 +1027,9 @@ def main():
     print("[Step 8/8] Save the model...")
     print("-" * 80)
 
-    save_path = 'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\neodogen_models\cross_att_dogen_gait_classifier.pth'
+    save_path = r'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\neodogen_models\cross_att_st2_dogen_gait_classifier.pth'
     torch.save({
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': model.state_dict(best_model_state),
         'model_kwargs': model_kwargs,
         'train_losses': train_losses,
         'val_losses': val_losses,
