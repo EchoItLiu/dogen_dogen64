@@ -3,7 +3,7 @@
 
 1 Graph Convolution；
 
-2 The construction and then initialization of 
+2 The construction and then initialization of
 edge weights are not included here.
 
 3 ...
@@ -28,20 +28,20 @@ signal_subsample_ratio = 0.05  # 5% sampling, 4171 nodes ()
 Graph Neural Network (GNN) Gait Classification - Real Dataset Version
  =======================================
 Fully compatible with the structure of your actual data set:
-- Original signal: (83421,) Combined left and right foot pressure signals
-- TS features: (310, 13) 310 gait cycles × 13 features
- (time + 12 gait features) 
+- Original signal: (67500,) Combined left and right foot pressure signals
+- TS features: (L, 13) L gait cycles × 13 features
+ (time + 12 gait features)
 """
 
 """
 Graph structure design:
-- Signal nodes: Pressure values at each time point (83421 nodes)
-- TS feature nodes: 12 gait features (13 nodes, excluding the time column) 
+- Signal nodes: Pressure values at each time point (67500 nodes)
+- TS feature nodes: 12 gait features (13 nodes, excluding the time column)
 
 (MS)Edge types:
 1. Time edge: Signals connecting adjacent time points (after downsampling)
 2. Signal-TS feature edge: Connected based on gait cycle alignment
-3. TS feature-to-feature edge: Connecting related TS features 
+3. TS feature-to-feature edge: Connecting related TS features
 """
 
 '''
@@ -53,22 +53,22 @@ num_gnn_layers = 2  # It is recommended to have 2-3 layers.
 """
 **************************
 # Define the relevant feature pairs (used for constructing the edges between features) '''
-This position is of considerable research value. 
+This position is of considerable research value.
 
-When writing a paper there is indeed a strong theoretical basis to 
+When writing a paper there is indeed a strong theoretical basis to
 explain~~~. the interpretability of graph networks
-This might be demonstrated here. 
+This might be demonstrated here.
 
-Here, the TS features are combined and classified only into 
+Here, the TS features are combined and classified only into
 left-foot-left-foot and right-foot-right-foot.
-If the left-right feet are mixed and different (support, phase, 
+If the left-right feet are mixed and different (support, phase,
 stance, swing) are adopted, it might be another study, possibly.
 It might increase somewhat and be more explanatory.
 """
 
 
 """
-Subsequently, the Graph Attention Network, GAT... will be added... 
+Subsequently, the Graph Attention Network, GAT... will be added...
 (to be continued...)
 """
 
@@ -79,7 +79,7 @@ import numpy as np
 import pickle
 import os
 from torch_geometric.data import Data, Batch
-## 
+##
 # from torch_geometric.data import Dataset
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 from torch_geometric.loader import DataLoader as GeoDataLoader
@@ -122,19 +122,44 @@ def z_score_global(features):
     normalized = (features - mean_val) / std_val
     return normalized
 
+def ndstrarr2ndarray(str_nd_arr):
+    #
+    float_nd_arr = np.zeros(str_nd_arr.shape, dtype=np.float32)
+    for i in range(str_nd_arr.shape[0]):
+        for j in range(str_nd_arr.shape[1]):
+            float_nd_arr[i][j] = float(str_nd_arr[i][j])
+    return float_nd_arr
+
+
+# ==================== Unify minimum ts feature period length ====================
+def unify_min_num_cycles(ts_features):
+
+    # num_cycle_length array
+    num_cyc_length = np.zeros((len(ts_features)))
+    # select shortest
+    for i, ts_feature in enumerate(ts_features):
+        num_cyc_length[i] = ts_features[i].shape[0]
+    min_num_cycle = int(num_cyc_length.min())
+    # unify min_num_cycles
+    ts_features_unify = [ts_feature[:min_num_cycle,:] for ts_feature in ts_features]
+
+    return ts_features_unify, min_num_cycle
+
+
+
 
 # ==================== Graph Construction ====================
 
 class GaitGraphBuilder:
     """
-    Gait Graph Builder - Real Dataset Version 
+    Gait Graph Builder - Real Dataset Version
 
-    Optimizing for your dataset: 
+    Optimizing for your dataset:
 
-    Here is a single piece of data (Per data): 
+    Here is a single piece of data (Per data):
 
-    - Original Signal: (83421,) Left and Right Foot Pressure Signals
-    - TS Feature: (310, 13) 310 Gait Cycles × 13 Features
+    - Original Signal: (67500,) Left and Right Foot Pressure Signals
+    - TS Feature: (L, 13) L Gait Cycles × 13 Features
 
     """
 
@@ -161,9 +186,9 @@ class GaitGraphBuilder:
 
 
 
-        # Define the feature names of the TS data 
+        # Define the feature names of the TS data
         # (based on your dataset)
-        # TS data structure: (310, 13)
+        # TS data structure: (L, 13)
         # The 0th column: Time (in seconds)
         # The 1st - 12th columns: 12 gait features
 
@@ -175,7 +200,7 @@ class GaitGraphBuilder:
             'swing_2',            # Column 4: Right Swing Phase
             'swing_pct_1',        # Column 5: Percentage of Left Swing Phase
             'swing_pct_2',        # Column 6: Percentage of Right Swing Phase
-            'stance_1',           # Column 7: Left stance 
+            'stance_1',           # Column 7: Left stance
             'stance_2',           # Column 8: Right stance
             'stance_pct_1',       # Column 9: Percentage of Left Stance
             'stance_pct_2',       # Column 10: Percentage of Right Stance
@@ -184,14 +209,14 @@ class GaitGraphBuilder:
         ]
 
         # Define the relevant feature pairs (used to construct the edges between features)
-    
+
         self.ts_feature_pairs = [
             ('stride_time_1', 'stride_time_2'),      # Left and Right Strides for a Long Time
             ('swing_1', 'swing_2'),                  # Left-right swing phase
             ('swing_pct_1', 'swing_pct_2'),          # Percentage of left-right swing phase
             ('stance_1', 'stance_2'),                # Left and right support phase
             ('stance_pct_1', 'stance_pct_2'),        # Percentage of left-right stance
-            ('stride_time_1', 'swing_1'),            # Left stride length - swing phase,indeed the left foot - left-left foot association may be the greatest. 
+            ('stride_time_1', 'swing_1'),            # Left stride length - swing phase,indeed the left foot - left-left foot association may be the greatest.
             ('stride_time_2', 'swing_2'),            # Right stride length - swing phase,indeed the right foot - right-right foot association may be the greatest.
             ('swing_1', 'stance_1'),                 # Left swing phase - stance phase
             ('swing_2', 'stance_2'),                 # Right swing phase - stance phase
@@ -201,16 +226,16 @@ class GaitGraphBuilder:
 
     def build_graph(self, original_signal, ts_features, label):
         """
-        Construct the graph data for a single sample (each piece of data) 
+        Construct the graph data for a single sample (each piece of data)
 
         Parameters:
         original_signal: ndarray, shape [T] Left and right foot pressure signals
-        - For example: (83421,) Combined pressure signal
+        - For example: (67500,) Combined pressure signal
         ts_features: ndarray, shape [num_cycles, 13] TS feature matrix
-        - For example: (310, 13) 310 gait cycles × 13 features
+        - For example: (L, 13) L gait cycles × 13 features
         - The 0th column: Time (seconds)
         - The 1st - 12th columns: 12 gait features
-        label: int, Sample label (0 = ALS, 1 = Control, 2 = Hunt, 3 = Park) 
+        label: int, Sample label (0 = ALS, 1 = Control, 2 = Hunt, 3 = Park)
 
         Return:
         Data: torch_geometric.data.Data object
@@ -218,29 +243,41 @@ class GaitGraphBuilder:
 
 
         # ==================== 1. Signal nodex ====================
-        T = original_signal.shape[0]  
+        T = original_signal.shape[0]
         subsample_T = max(1, int(T * self.signal_subsample_ratio))
         step = max(1, T // subsample_T)
-        # 
+        #
         signal_nodes = original_signal[::step]  # [subsample_T,]
         num_signal_nodes = len(signal_nodes)
 
-        
+
         # ==================== 2. TS features nodes ====================
         ts_feature_nodes = ts_features[:, 1:]  # [num_cycles, 12]
-    
-        # e.g.: (310, 12) -> mean -> (12,)
+
+        # e.g.: (L, 12) -> mean -> (12,)
         ts_feature_nodes = ts_feature_nodes.mean(axis=0)  # [12,]
+        print ('t3_ts_feature_nodes:', ts_feature_nodes.shape)
+
         num_ts_nodes = len(ts_feature_nodes)  # 12
-        
+        print ('t4_num_ts_nodes:', num_ts_nodes)
+
+
         # ==================== 3. Node Feature Matrix ==========
-        
+
         # Signal node features: [num_signal_nodes, 1]
         signal_node_features = signal_nodes.reshape(-1, 1).astype(np.float32)
         # TS node features: [12, 1]
         ts_node_features = ts_feature_nodes.reshape(-1, 1).astype(np.float32)
         #  [total_nodes, 1]
+        '''
+        There is sequential concatenation. The
+        first num_signal_nodes are the original
+        signals, and the following num_signal_nodes
+        are the ts features.
+        '''
         x = np.concatenate([signal_node_features, ts_node_features], axis=0)
+        # print ('t5_x_shape:', x.shape)
+
         x = torch.FloatTensor(x)  # [total_nodes, 1]
 
 
@@ -249,11 +286,11 @@ class GaitGraphBuilder:
         edge_list = []
         total_nodes = num_signal_nodes + num_ts_nodes
 
-        
+
         '''
-        # This is a bidirectional edge. Only the edge_index 
+        # This is a bidirectional edge. Only the edge_index
         of the edge is obtained.
-        ## Only connect the adjacent time points of the original 
+        ## Only connect the adjacent time points of the original
         signal (of course, the interval here is 'step') in both
          directions.
         '''
@@ -278,8 +315,8 @@ class GaitGraphBuilder:
             segment_size = num_signal_nodes // num_ts_feature_nodes  # Signal node segmentation
 
             for ts_idx in range(num_ts_feature_nodes):
-    
-                # Each TS feature node is connected to the corresponding 
+
+                # Each TS feature node is connected to the corresponding
                 ## signal node segment.
                 start_idx = ts_idx * segment_size
                 end_idx = min((ts_idx + 1) * segment_size, num_signal_nodes)
@@ -291,7 +328,7 @@ class GaitGraphBuilder:
                     edge_list.append([signal_node_idx, ts_node_global_idx])
                     edge_list.append([ts_node_global_idx, signal_node_idx])
 
-        
+
         # ---- MS-Type 3: Edges between TS features ----
         if self.add_ts_feature_edges:
             # Build edges based on the predefined features
@@ -315,7 +352,7 @@ class GaitGraphBuilder:
         '''
         # === 5. Convert to torch.Tensor of LongTensor integer type to
         # obtain the edge index tensor and then transpose it ======
-        #==============        
+        #==============
         if len(edge_list) > 0:
             edge_index = torch.LongTensor(edge_list).T  # [2, num_edges]
         else:
@@ -330,12 +367,16 @@ class GaitGraphBuilder:
             edge_index=edge_index,  # [2, num_edges] Edge Indice
             y=torch.LongTensor([label])  # [1] Label
         )
-        
+
         # Add additional attributes
         graph_data.num_signal_nodes = num_signal_nodes
+        # print ('t6_ori_num_signal_nodes:', graph_data.num_signal_nodes)
         graph_data.num_ts_nodes = num_ts_nodes
+        # print ('t7_ori_num_ts_nodes:', graph_data.num_ts_nodes)
         graph_data.total_nodes = total_nodes
+        # print ('t8_ori_total_nodes:', graph_data.total_nodes)
         graph_data.original_signal_length = T  # Record the length of the original signal
+        # print ('t9_ori_num_signal_length:', graph_data.original_signal_length)
 
         return graph_data
 
@@ -344,9 +385,9 @@ class GaitGraphBuilder:
 
 
 
-# ==================== 
+# ====================
 # Import the doge64 data and divide it into training and
- # testing sets (note that this is for single-legged DJ here; 
+ # testing sets (note that this is for single-legged DJ here;
    # you can choose double-legged later)
 # ====================
 
@@ -388,28 +429,37 @@ def load_dogen_data(dogen_path, train_ratio=0.5, select_foot = 'left'):
             right_data =current_dogen_dict['right_data'].astype(np.float32).reshape(1, -1)
             originalSingal_data = np.concatenate((left_data, right_data), axis=0)
 
-            
+
         originalSingal_length = originalSingal_data.shape[1]
 
 
-        ts_data = current_dogen_dict['ts_array'][:, 1:]  # [num_cycles, 13]
-        elapsed_time = current_dogen_dict['ts_array'][0] # Elapsed Time (sec)
+        ts13_array = current_dogen_dict['ts13_array']
+        ts13_array = ndstrarr2ndarray(ts13_array)
 
-        ts_data = ndstrarr2ndarray(ts_data).astype(np.float32)
+        ts_data = ts13_array[:, 1:].astype(np.float32)  # [num_cycles, 13]
+        elapsed_time = ts13_array[:, 0].astype(np.float32) # Elapsed Time (sec)
+
         ts_percent2_float_indice = [(5-1),(6-1),(9-1),(10-1),(12-1)]
 
         for _, k  in enumerate(ts_percent2_float_indice):
             ts_data[:,k] = ts_data[:,k]/100
 
         # concat elapsed time dim [L,13]
-        ts_data_ = np.concatenate((elapsed_time.reshape(len(elaspsed_time),1),ts_data), axis=1)
+        # print ('1:', elapsed_time.shape)
+        # print ('2:', ts_data.shape)
+        ts_data_ = np.concatenate((elapsed_time.reshape(len(elapsed_time),1),ts_data), axis=1)
         #
+        # print ('3:', ts_data_.shape)
         origin_data_features.append(originalSingal_data)
         ts_features.append(ts_data_)
         basenames_l.append(base_name.lower())
 
 
     origin_data_features = np.array(origin_data_features)  # [N, L]/[N,2,L]
+
+
+    print("\n Unify ts feature length...")
+    ts_features, _ = unify_min_num_cycles(ts_features)
     ts_features = np.array(ts_features)           # [N, num_cycles, 13]
 
     origin_data_features = max_min_global(origin_data_features)
@@ -435,7 +485,7 @@ def load_dogen_data(dogen_path, train_ratio=0.5, select_foot = 'left'):
             curr_label = 3
         # else:
             # pass
-            continue
+            # continue
 
         labels_l.append(curr_label)
 
@@ -443,7 +493,7 @@ def load_dogen_data(dogen_path, train_ratio=0.5, select_foot = 'left'):
 
 
 
-    # 
+    #
     ## → Parkinson
     unique, counts = np.unique(labels, return_counts=True)
     label_names = ['ALS', 'Control', 'Huntington', 'Parkinson']
@@ -458,11 +508,11 @@ def load_dogen_data(dogen_path, train_ratio=0.5, select_foot = 'left'):
     train_indices = indices[:n_train]
     test_indices = indices[n_train:]
 
-    train_original_signals = lr_data_features[train_indices]
+    train_original_signals = origin_data_features[train_indices]
     train_ts_features = ts_features[train_indices]
     train_labels = labels[train_indices]
 
-    test_original_signals = lr_data_features[test_indices]
+    test_original_signals = origin_data_features[test_indices]
     test_ts_features = ts_features[test_indices]
     test_labels = labels[test_indices]
 
@@ -478,7 +528,7 @@ def load_dogen_data(dogen_path, train_ratio=0.5, select_foot = 'left'):
 
 class GaitGNN(nn.Module):
     """
-    Gait Graph Neural Network Model - Real Dataset Version 
+    Gait Graph Neural Network Model - Real Dataset Version
 
     Fully compatible with your dataset:
     - Input: Graph data (signal nodes + TS feature nodes)
@@ -492,6 +542,7 @@ class GaitGNN(nn.Module):
                  num_gnn_layers=2,            # Number of GNN layers
                  num_classes=4,               # Classification number
                  dropout=0.3,
+                 # batchSize=1,
                  pooling_type='mean'):        # Pooling type: 'mean', 'max', 'both'
         super().__init__()
 
@@ -501,6 +552,7 @@ class GaitGNN(nn.Module):
         self.num_gnn_layers = num_gnn_layers
         self.num_classes = num_classes
         self.pooling_type = pooling_type
+        # self.batch_size = batchSize
 
 
         # ==================== Node feature encoding ====================
@@ -556,7 +608,7 @@ class GaitGNN(nn.Module):
 
     def forward(self, data):
         """
-        Forward propagation 
+        Forward propagation
 
         Parameters:
         data: torch_geometric.data.Data object or Batch object
@@ -564,66 +616,67 @@ class GaitGNN(nn.Module):
         - data.edge_index: [2, num_edges] Edge indices
         - data.batch: [total_nodes] Batch indices
         - data.num_signal_nodes: Number of signal nodes (for each graph)
-        - data.num_ts_nodes: Number of TS feature nodes (for each graph) 
+        - data.num_ts_nodes: Number of TS feature nodes (for each graph)
 
         Return: logits: [batch_size, num_classes]
         """
 
         x = data.x  # [total_nodes, 1]
+        # print ('x:', x.shape)
         edge_index = data.edge_index  # [2, num_edges]
-        '''
-
-        '''
-        
-        '''
-        ## It is likely that the attribute of data.batch needs
-        to be pre-defined earlier. ##
-
-        '''
-        batch = data.batch  # The batch index of [total_nodes]
-
-        
-       # ==================== Node Feature Encoding ====================
+        # print ('edge_index:', edge_index.shape)
 
 
+        Batch = data.batch  # Hidden attribution [total_nodes] [0..,1..2,..,3,bs-1]
+        # batch = self.batch_size
+        print ('Batch:', Batch)
+
+       # ============== Node Feature Encoding ==============
+
+        # obtain the node segmentation information of each graph
         if hasattr(data, 'num_signal_nodes'):
-            # The case of a single graph
-            num_signal_nodes = data.num_signal_nodes
-            num_ts_nodes = data.num_ts_nodes
+            print ("...singal graph...")
+            # # The case of a single graph( of batch)
+            # num_signal_nodes = data.num_signal_nodes
+            # [,,,] → []
+            num_signal_nodes = data.num_signal_nodes[0].item()
+
+            # num_ts_nodes = data.num_ts_nodes
+            # [,,,] → []
+            num_ts_nodes = data.num_ts_nodes[0].item()
+
+
+            # print ("num_signal_nodes1:", num_signal_nodes)
+            # print ("num_ts_nodes1:", num_ts_nodes)
+
         else:
-            
+            print ("...batch graph...")
+            # The case of batch
             total_nodes = x.size(0)
-            num_graphs = batch.max().item() + 1
+            num_graphs = Batch.max().item() + 1
+            print ('The number of graphs in the batch:', num_graphs)
             # Estimate the number of signal nodes
             num_signal_nodes = int(total_nodes * 0.9 // num_graphs)
-            # Total number of [individual] graph nodes - 
-            ## Number of signal nodes
+            # Total number of [individual] graph nodes -
+              ## Number of signal nodes
             num_ts_nodes = total_nodes // num_graphs - num_signal_nodes
 
 
-        # Encoded signal node -  
-        '''
-        ###
-        **There is also a batch dimension, so I understand that
-        **there needs to be a determination here.
-        signal_nodes = x[:,:num_signal_nodes,:]
-        ...
-        ts_nodes = x[:,num_signal_nodes:,:]
-        ###
-        ...
-        '''
+        # Encoded signal node -
+
+
+        # print ('1:', x.shape)
+        # print ('2:', x.dtype)
+        # print ('3:', num_signal_nodes)
         signal_nodes = x[:num_signal_nodes, :]  # [num_signal_nodes, 1]
+
         signal_encoded = self.signal_encoder(signal_nodes)  # [num_signal_nodes, hidden_dim]
 
-        # Encoding TS feature nodes - 
+        # Encoding TS feature nodes -
         ts_nodes = x[num_signal_nodes:, :]  # [num_ts_nodes, 1]
         ts_encoded = self.ts_encoder(ts_nodes)  # [num_ts_nodes, hidden_dim]
 
         # The merged encoded node features
-        '''
-        Similarly, if "batch" is included, then:
-        x = torch.cat([signal_encoded, ts_encoded],dim=1)
-        '''
         x = torch.cat([signal_encoded, ts_encoded], dim=0)  # [total_nodes, hidden_dim]
 
 
@@ -639,16 +692,19 @@ class GaitGNN(nn.Module):
 
 
 
-        # ==================== Pooling4Graph, 
-        # which means expanding along the node dimension 
+        # ==================== Pooling4Graph,
+        # which expands along the node dimension
         # and averaging. ====================
-        if self.pooling_type == 'mean':
-            x_pooled = global_mean_pool(x, batch)  # [batch_size, hidden_dim]
+            # print ('t10_x_shape:', x.shape)
+            # print ('t11_x_type:', x.dtype)
+            print ('**t12_batch**:', Batch)
+
+            x_pooled = global_mean_pool(x, Batch)  # [batch_size, hidden_dim]
         elif self.pooling_type == 'max':
-            x_pooled = global_max_pool(x, batch)  # [batch_size, hidden_dim]
+            x_pooled = global_max_pool(x, Batch)  # [batch_size, hidden_dim]
         elif self.pooling_type == 'both':
-            x_mean = global_mean_pool(x, batch)
-            x_max = global_max_pool(x, batch)
+            x_mean = global_mean_pool(x, Batch)
+            x_max = global_max_pool(x, Batch)
             x_pooled = torch.cat([x_mean, x_max], dim=1)  # [batch_size, hidden_dim*2]
         else:
             raise ValueError(f"Unknown pooling type: {self.pooling_type}")
@@ -676,16 +732,17 @@ class GaitGraphDataset:
         Parameters:
         original_signals: ndarray, shape [N, T] Original signal (or [N, 2, T])
         - N: Number of samples
-        - T: Number of time points (e.g., 83421)
+        - T: Number of time points (e.g., 67500)
         ts_features: ndarray, shape [N, num_cycles, 13] TS features
         - N: Number of samples
-        - num_cycles: Number of gait cycles (e.g., 310)
+        - num_cycles: Number of gait cycles (e.g., L)
         - 13: Number of features (time + 12 gait features)
         labels: ndarray, shape [N] Labels
         signal_subsample_ratio: Signal sampling ratio (controls the scale of the plot)
         """
 
-        self.original_signals = original_signals
+        # [N,1,T] → [N,T]
+        self.original_signals = np.squeeze(original_signals)
         self.ts_features = ts_features
         self.labels = labels
 
@@ -710,7 +767,7 @@ class GaitGraphDataset:
             )
             self.graph_list.append(graph_data)
 
-        print(f"he graph data has been constructed, with a total of {len(self.graph_list)} graphs.")
+        print(f"The graph data has been constructed, with a total of {len(self.graph_list)} graphs.")
 
         # Statistical graph information
         self._print_graph_stats()
@@ -747,7 +804,7 @@ def train_gnn_model(model, train_loader, val_loader, epochs=50, lr=1e-3,
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-                                                             factor=0.5, patience=5, verbose=True)
+                                                             factor=0.5, patience=5)
 
     train_losses = []
     val_losses = []
@@ -773,25 +830,19 @@ def train_gnn_model(model, train_loader, val_loader, epochs=50, lr=1e-3,
         pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
         for batch_idx, data in enumerate(pbar):
 
-            # ✔Here, a training batch size should be set as an 
-              ## attribute of the batch in the data.:
-                ### data.batch = 4
-
 
             data = data.to(device)
-
-            
             logits = model(data)
             loss = criterion(logits, data.y)
 
-            
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
 
-            
+
             _, predicted = logits.max(1)
             total += data.y.size(0)
             correct += predicted.eq(data.y).sum().item()
@@ -800,13 +851,13 @@ def train_gnn_model(model, train_loader, val_loader, epochs=50, lr=1e-3,
                 acc = 100. * correct / total
                 pbar.set_postfix({'Loss': f'{loss.item():.4f}', 'Acc': f'{acc:.2f}%'})
 
-        
+
         avg_train_loss = total_loss / len(train_loader)
         train_acc = 100. * correct / total
         train_losses.append(avg_train_loss)
         train_accs.append(train_acc)
 
-        
+
         model.eval()
         val_loss = 0.0
         val_correct = 0
@@ -817,8 +868,6 @@ def train_gnn_model(model, train_loader, val_loader, epochs=50, lr=1e-3,
                 data = data.to(device)
 
 
-                # ✔ Set the batch size in the same way✔
-                # data.batch = 4
                 logits = model(data)
                 loss = criterion(logits, data.y)
 
@@ -883,7 +932,6 @@ def test_gnn_model(model, test_loader, device='cpu'):
     with torch.no_grad():
         for data in test_loader:
 
-            # data.batch = 4
             data = data.to(device)
 
             logits = model(data)
@@ -995,17 +1043,21 @@ def plot_gnn_results(train_losses, val_losses, train_accs, val_accs, test_result
     axes[1, 1].grid(True, alpha=0.3, axis='y')
 
     plt.tight_layout()
-    plt.savefig('D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results\gnn_training_results.png', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.savefig('D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results\gnn_vis_results.png', dpi=300, bbox_inches='tight')
+    # plt.show()
+    plt.cla()
+    plt.close()
+    #
 
-    print("The visualization results have been saved to: gnn_training_results.png")
+    print("The visualization results have been saved to: gnn_vis_results.png")
+
 
 
 # ==================== Main Function ====================
 
 def main():
     """
-    Main Function - Complete Process of GNN Gait Classification 
+    Main Function - Complete Process of GNN Gait Classification
     (Real Dataset Version)
     """
     print("\n" + "=" * 80)
@@ -1024,8 +1076,8 @@ def main():
 
         # Generate simulated data based on the structure of your dataset
         num_samples = 80
-        original_signal_length = 83421  # The actual length of your signal
-        ts_num_cycles = 310  # The actual number of TS gait cycles you have
+        original_signal_length = 67500  # The actual length of your signal
+        ts_num_cycles = 330  # The actual number of TS gait cycles you have
 
         print(f"Generate simulated data: {num_samples} samples")
         print(f" Original signal length: {original_signal_length}")
@@ -1067,7 +1119,7 @@ def main():
     print("\n [Step 2/5] Build graph data")
     print("-" * 80)
 
-    signal_subsample_ratio = 0.01  # 
+    signal_subsample_ratio = 0.01  #
 
 
     train_graph_dataset = GaitGraphDataset(
@@ -1124,12 +1176,17 @@ def main():
     print(f"Total number of model parameters: {total_params:,}")
     print(f"The number of trainable parameters: {trainable_params:,}")
 
+
+
     # ==================== 4. Train the model ====================
     print("\n [Step 4/5] Train the GNN model")
     print("-" * 80)
+    # epoch_train_num = 10
+    # epoch_train_num = 20
+    epoch_train_num = 30
 
     train_losses, val_losses, train_accs, val_accs, best_model_state = train_gnn_model(
-        model, train_loader, val_loader, epochs=30, lr=1e-3,
+        model, train_loader, val_loader, epochs=epoch_train_num, lr=1e-3,
         patience=10, device=device
     )
 
@@ -1151,9 +1208,9 @@ def main():
     plot_gnn_results(train_losses, val_losses, train_accs, val_accs, test_results)
 
     # ==================== Save the model ====================
-    save_path = 'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results/gait_gnn_classifier_real.pth'
+    save_path = r'D:\gait-in-neurodegenerative-disease-database-1.0.0\gait-in-neurodegenerative-disease-database-1.0.0\log_boards_model_pred_results/gait_gnn_classifier.pth'
     torch.save({
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': model.state_dict(best_model_state),
         'train_losses': train_losses,
         'val_losses': val_losses,
         'train_accs': train_accs,
